@@ -73,17 +73,25 @@ func (run *reloginRun) snapshot() map[string]any {
 	}
 }
 
-func (s *Server) newReloginRun() *reloginRun {
+func (s *Server) newReloginRun(targets []grokpool.Account, cancel context.CancelFunc) *reloginRun {
 	s.reloginMu.Lock()
 	defer s.reloginMu.Unlock()
 	if s.reloginJobs == nil {
 		s.reloginJobs = map[string]*reloginRun{}
 	}
 	s.reloginSeq++
-	run := &reloginRun{ID: fmt.Sprintf("r%d", s.reloginSeq), CreatedAt: time.Now(), Running: true}
+	run := &reloginRun{ID: fmt.Sprintf("r%d", s.reloginSeq), CreatedAt: time.Now(), Running: true, Total: len(targets), cancel: cancel}
+	for _, acc := range targets {
+		run.Entries = append(run.Entries, &reloginEntry{ID: acc.ID, Email: acc.Email, Status: "queued"})
+	}
+	// Publish only after the initial fields are complete. Status handlers can
+	// discover predictable IDs while the POST handler is still preparing work.
 	s.reloginJobs[run.ID] = run
 	for id, job := range s.reloginJobs {
-		if !job.Running && time.Since(job.FinishedAt) > reloginJobTTL {
+		job.mu.Lock()
+		expired := !job.Running && time.Since(job.FinishedAt) > reloginJobTTL
+		job.mu.Unlock()
+		if expired {
 			delete(s.reloginJobs, id)
 		}
 	}
@@ -132,13 +140,8 @@ func (s *Server) handleGrokPoolRefreshCookie(w http.ResponseWriter, r *http.Requ
 		writeError(w, fmt.Errorf("没有可刷新的账号（号池为空，或指定账号不存在）"), http.StatusBadRequest)
 		return
 	}
-	run := s.newReloginRun()
-	run.Total = len(targets)
-	for _, acc := range targets {
-		run.Entries = append(run.Entries, &reloginEntry{ID: acc.ID, Email: acc.Email, Status: "queued"})
-	}
 	ctx, cancel := context.WithCancel(context.Background())
-	run.cancel = cancel
+	run := s.newReloginRun(targets, cancel)
 	go s.executeReloginRun(ctx, run)
 	writeJSONStatus(w, map[string]any{"id": run.ID, "total": run.Total}, http.StatusAccepted)
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 )
 
 func TestDialRawConnConnectAuthAndBufferedBytes(t *testing.T) {
@@ -72,5 +73,49 @@ func TestProxyAddressHandlesDefaultsAndIPv6(t *testing.T) {
 	}
 	if got != "[::1]:80" {
 		t.Fatalf("proxy address = %q, want [::1]:80", got)
+	}
+}
+
+func TestDialRawConnCancelsPendingConnectHandshake(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan struct{})
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		close(accepted)
+		_, _ = io.Copy(io.Discard, conn)
+		_ = conn.Close()
+	}()
+
+	proxyURL, err := url.Parse("http://" + listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := dialRawConn(ctx, &net.Dialer{}, proxyURL, "tcp", "example.com:443")
+		result <- err
+	}()
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("proxy connection was not accepted")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("dialRawConn succeeded after cancellation")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("dialRawConn did not stop after cancellation")
 	}
 }

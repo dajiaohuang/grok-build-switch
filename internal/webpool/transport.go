@@ -114,6 +114,8 @@ func dialRawConn(ctx context.Context, dialer *net.Dialer, proxy *url.URL, networ
 	if err != nil {
 		return nil, fmt.Errorf("连接代理失败: %w", err)
 	}
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
 	if scheme == "https" {
 		tlsConn := tls.Client(conn, &tls.Config{ServerName: proxy.Hostname(), MinVersion: tls.VersionTLS12})
 		if dialer.Timeout > 0 {
@@ -153,6 +155,13 @@ func dialRawConn(ctx context.Context, dialer *net.Dialer, proxy *url.URL, networ
 		return nil, fmt.Errorf("代理 CONNECT 返回 %d", resp.StatusCode)
 	}
 	_ = resp.Body.Close()
+	if !stopCancel() {
+		_ = conn.Close()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return nil, context.Canceled
+	}
 	return &bufferedConn{Conn: conn, reader: reader}, nil
 }
 
@@ -192,6 +201,8 @@ func viaSocks(ctx context.Context, d *net.Dialer, proxy *url.URL, network, addr 
 	if err != nil {
 		return nil, err
 	}
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
 	host, portStr, _ := net.SplitHostPort(addr)
 	port := 0
 	for _, c := range portStr {
@@ -273,6 +284,13 @@ func viaSocks(ctx context.Context, d *net.Dialer, proxy *url.URL, network, addr 
 	if err != nil {
 		_ = conn.Close()
 		return nil, err
+	}
+	if !stopCancel() {
+		_ = conn.Close()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return nil, context.Canceled
 	}
 	return conn, nil
 }

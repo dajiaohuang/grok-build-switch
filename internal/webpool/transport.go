@@ -116,10 +116,14 @@ func dialRawConn(ctx context.Context, dialer *net.Dialer, proxy *url.URL, networ
 	}
 	if scheme == "https" {
 		tlsConn := tls.Client(conn, &tls.Config{ServerName: proxy.Hostname(), MinVersion: tls.VersionTLS12})
+		if dialer.Timeout > 0 {
+			_ = tlsConn.SetDeadline(time.Now().Add(dialer.Timeout))
+		}
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			_ = conn.Close()
 			return nil, fmt.Errorf("HTTPS 代理 TLS 握手失败: %w", err)
 		}
+		_ = tlsConn.SetDeadline(time.Time{})
 		conn = tlsConn
 	}
 	reader := bufio.NewReader(conn)

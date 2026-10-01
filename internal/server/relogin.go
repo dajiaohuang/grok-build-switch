@@ -118,7 +118,10 @@ func (s *Server) handleGrokPoolRefreshCookie(w http.ResponseWriter, r *http.Requ
 		IDs []string `json:"ids"`
 	}
 	if r.Body != nil && r.ContentLength != 0 {
-		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&req)
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&req); err != nil {
+			writeError(w, fmt.Errorf("无效的刷新请求: %w", err), http.StatusBadRequest)
+			return
+		}
 	}
 	want := map[string]bool{}
 	for _, id := range req.IDs {

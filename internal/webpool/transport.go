@@ -114,7 +114,10 @@ func dialRawConn(ctx context.Context, dialer *net.Dialer, proxy *url.URL, networ
 	if err != nil {
 		return nil, fmt.Errorf("连接代理失败: %w", err)
 	}
-	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	// Capture the raw socket before conn is replaced with the TLS wrapper.
+	// The cancellation callback can run concurrently with that replacement.
+	rawConn := conn
+	stopCancel := context.AfterFunc(ctx, func() { _ = rawConn.Close() })
 	defer stopCancel()
 	if scheme == "https" {
 		tlsConn := tls.Client(conn, &tls.Config{ServerName: proxy.Hostname(), MinVersion: tls.VersionTLS12})
